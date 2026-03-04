@@ -8,6 +8,19 @@ description: Track and analyze New Zealand coffee roaster offerings for filter/e
 ## Overview
 Use this skill to build and operate a repeatable coffee-roast monitoring pipeline focused on New Zealand roasters. Auto-discover roaster candidates from the web, capture inventory snapshots, standardize brew method and roast level metadata, index tasting notes against SCA flavor-wheel style categories, and personalize recommendations with long-term user memory.
 
+## Agent Capability Summary
+
+When this skill is available, the agent can perform these end-to-end tasks:
+
+1. Discover and refresh NZ roaster candidates.
+2. Fetch cross-platform product catalogs (Shopify, WooCommerce, JSON-LD fallback).
+3. Recommend beans under strict operating rules (in-stock first, whole-bean default).
+4. Create single-supplier cart URLs for fast checkout tests.
+5. Log user orders and feedback, then compute monthly consumption and cost summaries.
+6. Manage user watchlists and user-level lifecycle controls (`bootstrap-user`, `reset-user`).
+
+Use this section as the default “what can you do?” answer for agent operators.
+
 ## Workflow
 
 1. **Discover roasters online** using `scripts/discover_roasters.py` (no manual seed file required).

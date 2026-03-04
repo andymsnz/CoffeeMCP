@@ -1,56 +1,62 @@
 # CoffeeMCP
 
-Skill-focused toolkit for discovering NZ roasters, normalizing catalog data, learning preferences, and generating one-click cart links.
+CoffeeMCP gives your agent a practical coffee-ops workflow: discover roasters, find in-stock beans, build cart links, and track spend + preference feedback over time.
 
-## Included skill
+## What this skill enables your agent to do
 
-- `nz-coffee-roast-monitor/`
-  - `scripts/discover_roasters.py` — discover candidate NZ roasters (with stable fallback seeds)
-  - `scripts/fetch_roasts.py` — fetch and normalize catalogs via Shopify, WooCommerce, or JSON-LD fallback
-  - `scripts/scaa_notes.py` — map tasting notes to flavor families
-  - `scripts/profile_memory.py` — store preferences, orders, watchlist, and monthly spend summaries
-  - `scripts/add_to_cart.py` — build one-click cart URLs using in-stock variants
+Your agent can:
 
-## Quick test workflow
+1. **Discover NZ coffee merchants** (including fallback seeds when search is flaky).
+2. **Fetch live catalog data** from Shopify, WooCommerce, and JSON-LD storefronts.
+3. **Recommend beans** with stock-first logic and whole-bean default behavior.
+4. **Generate one-click cart URLs** for a single supplier with specific bean choices.
+5. **Track order history** (grams + cost) and compute monthly consumption/spend summaries.
+6. **Maintain user-specific preference memory** with feedback and watchlist controls.
+
+## Getting started (5 minutes)
+
+### 1) Build a fresh catalog snapshot
 
 ```bash
 python nz-coffee-roast-monitor/scripts/discover_roasters.py --out /tmp/nz_roasters.csv
 python nz-coffee-roast-monitor/scripts/fetch_roasts.py --roasters /tmp/nz_roasters.csv --out /tmp/catalog.jsonl
 python nz-coffee-roast-monitor/scripts/scaa_notes.py --input /tmp/catalog.jsonl --output /tmp/catalog_tagged.jsonl
-
-python nz-coffee-roast-monitor/scripts/add_to_cart.py \
-  --input /tmp/catalog_tagged.jsonl \
-  --roaster "Grey Roasting Co" \
-  --items "Sipi Falls" "Ruera" "Java Halu" \
-  --grind "WHOLE BEANS" --qty 1
 ```
 
-## Notes
+### 2) Initialize persistent memory DB
 
-- Recommendations prioritize **in-stock** options by default.
-- Default grind selection is **WHOLE BEANS** unless the user explicitly asks for pre-ground.
-- Use watchlist flow for specific out-of-stock beans.
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py init   --db ~/.openclaw/workspace/memory/coffee-memory.db
 
-## Driving Instructions
+python nz-coffee-roast-monitor/scripts/profile_memory.py ingest-catalog   --db ~/.openclaw/workspace/memory/coffee-memory.db   --input /tmp/catalog_tagged.jsonl
+```
+
+### 3) Generate a test cart (whole beans default)
+
+```bash
+python nz-coffee-roast-monitor/scripts/add_to_cart.py   --input /tmp/catalog_tagged.jsonl   --roaster "Grey Roasting Co"   --items "Sipi Falls" "Ruera" "Java Halu"   --qty 1
+```
+
+### 4) Log an order + check month summary
+
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py order-add   --db ~/.openclaw/workspace/memory/coffee-memory.db   --user andy --sku <sku> --grams 250 --price-nzd 26.50
+
+python nz-coffee-roast-monitor/scripts/profile_memory.py monthly-summary   --db ~/.openclaw/workspace/memory/coffee-memory.db   --user andy --month 2026-03
+```
+
+## Operating defaults
 
 - **Stock-first:** recommendations and carts default to in-stock beans only.
-- **Whole-bean default:** carts default to `WHOLE BEANS`; pre-ground is opt-in only by explicit user request.
-- **Suitability vs grind:** `filter` / `espresso` describe bean suitability/style, not default grind.
-- **Watchlist behavior:** out-of-stock beans are tracked via watchlist when specifically requested.
-- **Reporting discipline:** log orders with grams + cost so monthly spend/consumption dashboards stay accurate.
-- **Multi-user hygiene:** bootstrap and reset at user scope (`bootstrap-user`, `reset-user`) to keep sharable deployments clean.
+- **Whole-bean default:** pre-ground only when explicitly requested.
+- **Suitability semantics:** filter/espresso are bean style labels, not grind instructions.
+- **User isolation:** use `bootstrap-user` and `reset-user` for shared deployments.
 
-## Recommended persistent DB path
+## Included skill
 
-Use a stable DB file for long-term history:
-
-```bash
-~/.openclaw/workspace/memory/coffee-memory.db
-```
-
-Day-one/reset helpers for sharable multi-user flow:
-
-```bash
-python nz-coffee-roast-monitor/scripts/profile_memory.py bootstrap-user --db ~/.openclaw/workspace/memory/coffee-memory.db --user andy
-python nz-coffee-roast-monitor/scripts/profile_memory.py reset-user --db ~/.openclaw/workspace/memory/coffee-memory.db --user andy
-```
+- `nz-coffee-roast-monitor/`
+  - `scripts/discover_roasters.py`
+  - `scripts/fetch_roasts.py`
+  - `scripts/scaa_notes.py`
+  - `scripts/profile_memory.py`
+  - `scripts/add_to_cart.py`
