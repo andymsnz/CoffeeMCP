@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Fetch NZ roaster catalog snapshots into normalized JSONL records."""
+"""Fetch NZ roaster catalog snapshots into normalized JSONL records.
+
+Adapters:
+- Shopify (`/products.json`)
+- WooCommerce Store API (`/wp-json/wc/store/products`)
+- Generic JSON-LD Product fallback from catalog pages
+"""
 
 from __future__ import annotations
 
@@ -8,18 +14,19 @@ import csv
 import datetime as dt
 import json
 import re
-from dataclasses import dataclass
-from pathlib import Path
 import tempfile
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import urljoin
-
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+
+USER_AGENT = "Mozilla/5.0 (compatible; CoffeeMCP/1.0)"
 
 BREW_METHOD_HINTS = {
     "espresso": "espresso",
@@ -56,6 +63,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def http_get_text(url: str, timeout: int) -> str:
+    req = Request(url, headers={"User-Agent": USER_AGENT})
+    with urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
 def resolve_roaster_csv(roaster_csv: str | None, discover_max: int) -> str:
     if roaster_csv:
         return roaster_csv
@@ -67,6 +80,7 @@ def resolve_roaster_csv(roaster_csv: str | None, discover_max: int) -> str:
     discovered = discover("new zealand coffee roasters online shop", discover_max)
     write_csv(tmp.name, discovered)
     return tmp.name
+
 
 def load_roasters(path: str) -> list[Roaster]:
     with open(path, newline="", encoding="utf-8") as f:
@@ -94,26 +108,24 @@ def extract_notes(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def fetch_shopify_products(roaster: Roaster, timeout: int) -> Iterable[dict]:
-    endpoint = urljoin(roaster.base_url, "/products.json?limit=250")
-    with urlopen(endpoint, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data.get("products", [])
-
-
-def product_to_record(roaster: Roaster, product: dict, snapshot_at: str) -> dict:
-    body = re.sub(r"<[^>]+>", " ", product.get("body_html", ""))
-    title = product.get("title", "")
-    joined = f"{title} {body}"
-    variants = product.get("variants") or []
+def normalize_record(
+    roaster: Roaster,
+    snapshot_at: str,
+    url: str,
+    name: str,
+    body_text: str,
+    variants: list[dict],
+    sku_fallback: str,
+) -> dict:
+    joined = f"{name} {body_text}"
     variant = variants[0] if variants else {}
     in_stock = any(v.get("available") is True for v in variants)
     return {
         "snapshot_at": snapshot_at,
         "roaster": roaster.name,
-        "url": urljoin(roaster.base_url, f"/products/{product.get('handle', '')}"),
-        "name": title,
-        "sku": variant.get("sku") or f"{roaster.name}:{product.get('id')}",
+        "url": url,
+        "name": name,
+        "sku": variant.get("sku") or sku_fallback,
         "brew_methods": infer_brew_methods(joined),
         "roast_level": infer_roast_level(joined),
         "origin": "",
@@ -125,17 +137,176 @@ def product_to_record(roaster: Roaster, product: dict, snapshot_at: str) -> dict
         "in_stock": in_stock,
         "variant_titles_available": [v.get("title") for v in variants if v.get("available") is True],
         "variant_ids_available": [v.get("id") for v in variants if v.get("available") is True],
-        "variants": [
+        "variants": variants,
+    }
+
+
+def fetch_shopify_records(roaster: Roaster, timeout: int, snapshot_at: str) -> list[dict]:
+    endpoint = urljoin(roaster.base_url, "/products.json?limit=250")
+    data = json.loads(http_get_text(endpoint, timeout))
+    products = data.get("products", [])
+    records: list[dict] = []
+    for product in products:
+        body = re.sub(r"<[^>]+>", " ", product.get("body_html", ""))
+        variants = [
             {
                 "id": v.get("id"),
                 "title": v.get("title"),
                 "price": v.get("price"),
                 "available": bool(v.get("available")),
                 "grams": v.get("grams"),
+                "sku": v.get("sku"),
             }
-            for v in variants
-        ],
-    }
+            for v in (product.get("variants") or [])
+        ]
+        records.append(
+            normalize_record(
+                roaster=roaster,
+                snapshot_at=snapshot_at,
+                url=urljoin(roaster.base_url, f"/products/{product.get('handle', '')}"),
+                name=product.get("title", ""),
+                body_text=body,
+                variants=variants,
+                sku_fallback=f"{roaster.name}:{product.get('id')}",
+            )
+        )
+    return records
+
+
+def fetch_woocommerce_records(roaster: Roaster, timeout: int, snapshot_at: str) -> list[dict]:
+    # WooCommerce Store API is public on many stores.
+    endpoint = urljoin(roaster.base_url, "/wp-json/wc/store/products?per_page=100&page=1")
+    data = json.loads(http_get_text(endpoint, timeout))
+    if not isinstance(data, list):
+        raise ValueError("WooCommerce endpoint did not return product list")
+
+    records: list[dict] = []
+    for product in data:
+        name = product.get("name", "")
+        desc = re.sub(r"<[^>]+>", " ", (product.get("description") or ""))
+        short_desc = re.sub(r"<[^>]+>", " ", (product.get("short_description") or ""))
+        body = f"{desc} {short_desc}".strip()
+
+        prices = product.get("prices") or {}
+        price_raw = prices.get("price")
+        # Store API prices are often cents as string.
+        amount = None
+        if price_raw is not None:
+            try:
+                amount = float(price_raw) / 100.0 if int(float(price_raw)) > 999 else float(price_raw)
+            except Exception:
+                amount = None
+
+        variants = [
+            {
+                "id": product.get("id"),
+                "title": "Default / WHOLE BEANS",
+                "price": f"{amount:.2f}" if amount is not None else None,
+                "available": bool(product.get("is_in_stock", True)),
+                "grams": None,
+                "sku": product.get("sku"),
+            }
+        ]
+        records.append(
+            normalize_record(
+                roaster=roaster,
+                snapshot_at=snapshot_at,
+                url=product.get("permalink") or urljoin(roaster.base_url, "/"),
+                name=name,
+                body_text=body,
+                variants=variants,
+                sku_fallback=f"{roaster.name}:{product.get('id')}",
+            )
+        )
+    return records
+
+
+def fetch_jsonld_records(roaster: Roaster, timeout: int, snapshot_at: str) -> list[dict]:
+    page_url = urljoin(roaster.base_url, roaster.catalog_hint or "/")
+    html_page = http_get_text(page_url, timeout)
+
+    scripts = re.findall(
+        r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
+        html_page,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    products: list[dict] = []
+    for block in scripts:
+        block = block.strip()
+        try:
+            data = json.loads(block)
+        except Exception:
+            continue
+        nodes = data if isinstance(data, list) else [data]
+        for node in nodes:
+            if isinstance(node, dict) and node.get("@type") == "Product":
+                products.append(node)
+            if isinstance(node, dict) and isinstance(node.get("@graph"), list):
+                for g in node["@graph"]:
+                    if isinstance(g, dict) and g.get("@type") == "Product":
+                        products.append(g)
+
+    records: list[dict] = []
+    for idx, product in enumerate(products, start=1):
+        name = product.get("name") or f"Product {idx}"
+        desc = product.get("description") or ""
+        offers = product.get("offers") or {}
+        if isinstance(offers, list):
+            offer = offers[0] if offers else {}
+        else:
+            offer = offers
+        available_flag = str(offer.get("availability", "")).lower()
+        in_stock = "instock" in available_flag if available_flag else True
+        price = offer.get("price")
+        variants = [
+            {
+                "id": None,
+                "title": "Default / WHOLE BEANS",
+                "price": str(price) if price is not None else None,
+                "available": in_stock,
+                "grams": None,
+                "sku": product.get("sku"),
+            }
+        ]
+        records.append(
+            normalize_record(
+                roaster=roaster,
+                snapshot_at=snapshot_at,
+                url=product.get("url") or page_url,
+                name=name,
+                body_text=desc,
+                variants=variants,
+                sku_fallback=f"{roaster.name}:jsonld:{idx}",
+            )
+        )
+    return records
+
+
+def fetch_records_for_roaster(roaster: Roaster, timeout: int, snapshot_at: str) -> list[dict]:
+    # Probe adapters in order. Keep platform hint but allow fallback.
+    adapters = []
+    hint = (roaster.platform or "").lower()
+    if hint == "woocommerce":
+        adapters = [fetch_woocommerce_records, fetch_shopify_records, fetch_jsonld_records]
+    elif hint == "jsonld":
+        adapters = [fetch_jsonld_records, fetch_shopify_records, fetch_woocommerce_records]
+    else:
+        adapters = [fetch_shopify_records, fetch_woocommerce_records, fetch_jsonld_records]
+
+    last_error: Exception | None = None
+    for adapter in adapters:
+        try:
+            rows = adapter(roaster, timeout, snapshot_at)
+            if rows:
+                return rows
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+
+    if last_error:
+        raise last_error
+    return []
 
 
 def main() -> None:
@@ -148,11 +319,8 @@ def main() -> None:
 
     records: list[dict] = []
     for roaster in roasters:
-        if roaster.platform != "shopify":
-            continue
         try:
-            products = fetch_shopify_products(roaster, args.timeout)
-            records.extend(product_to_record(roaster, product, snapshot_at) for product in products)
+            records.extend(fetch_records_for_roaster(roaster, args.timeout, snapshot_at))
         except Exception as exc:  # noqa: BLE001
             records.append(
                 {
