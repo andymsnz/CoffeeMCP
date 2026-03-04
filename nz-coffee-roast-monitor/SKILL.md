@@ -91,3 +91,21 @@ python nz-coffee-roast-monitor/scripts/add_to_cart.py \
   --items "Sipi Falls" "Ruera" "Java Halu" \
   --grind FILTER --qty 1
 ```
+
+
+## Order Logging + Feedback Loop
+
+Log purchases so recommendations can adapt over time:
+
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py order-add \
+  --db data/coffee_memory.db --user andy --sku <sku> --grams 250
+
+python nz-coffee-roast-monitor/scripts/profile_memory.py order-list \
+  --db data/coffee_memory.db --user andy --limit 20
+
+python nz-coffee-roast-monitor/scripts/profile_memory.py feedback \
+  --db data/coffee_memory.db --user andy --sku <sku> --rating 5 --note "juicy and clean"
+```
+
+Use order+feedback history to adjust roast/method/flavor preferences over time.

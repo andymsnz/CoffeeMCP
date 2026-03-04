@@ -101,6 +101,29 @@ def ingest_catalog(conn: sqlite3.Connection, input_path: str) -> int:
     return inserted
 
 
+def record_order(conn: sqlite3.Connection, user_id: str, sku: str, grams: int, ordered_at: str | None = None) -> None:
+    ts = ordered_at or datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO orders(user_id, sku, grams, ordered_at) VALUES (?, ?, ?, ?)",
+        (user_id, sku, grams, ts),
+    )
+    conn.commit()
+
+
+def list_orders(conn: sqlite3.Connection, user_id: str, limit: int = 20) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT o.id, o.user_id, o.sku, c.name, c.roaster, o.grams, o.ordered_at
+        FROM orders o LEFT JOIN catalog c ON c.sku = o.sku
+        WHERE o.user_id = ?
+        ORDER BY o.ordered_at DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def record_feedback(conn: sqlite3.Connection, user_id: str, sku: str, rating: int, note: str) -> None:
     conn.execute(
         "INSERT INTO feedback(user_id, sku, rating, note, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -196,6 +219,18 @@ def cli() -> argparse.Namespace:
     ingest.add_argument("--db", required=True)
     ingest.add_argument("--input", required=True)
 
+    order_add = sub.add_parser("order-add")
+    order_add.add_argument("--db", required=True)
+    order_add.add_argument("--user", required=True)
+    order_add.add_argument("--sku", required=True)
+    order_add.add_argument("--grams", required=True, type=int)
+    order_add.add_argument("--ordered-at", default="", help="ISO timestamp (optional)")
+
+    order_list = sub.add_parser("order-list")
+    order_list.add_argument("--db", required=True)
+    order_list.add_argument("--user", required=True)
+    order_list.add_argument("--limit", default=20, type=int)
+
     feedback = sub.add_parser("feedback")
     feedback.add_argument("--db", required=True)
     feedback.add_argument("--user", required=True)
@@ -233,6 +268,13 @@ def main() -> None:
         init_db(conn)
         count = ingest_catalog(conn, args.input)
         print(f"ingested {count}")
+    elif args.cmd == "order-add":
+        init_db(conn)
+        record_order(conn, args.user, args.sku, args.grams, args.ordered_at or None)
+        print("order recorded")
+    elif args.cmd == "order-list":
+        init_db(conn)
+        print(json.dumps(list_orders(conn, args.user, args.limit), indent=2))
     elif args.cmd == "feedback":
         init_db(conn)
         record_feedback(conn, args.user, args.sku, args.rating, args.note)
