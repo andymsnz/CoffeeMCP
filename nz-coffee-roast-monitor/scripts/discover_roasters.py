@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Discover NZ coffee roasters from web search results."""
+"""Discover NZ coffee roasters from web search results.
+
+If web discovery is blocked/rate-limited, fall back to a curated seed list.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
 
-# Fallback so skill still works if search is blocked in the environment.
+# Stable fallback list so the skill remains useful even when search is blocked.
 FALLBACK_ROASTERS = [
     ("Coffee Supreme NZ", "https://coffeesupreme.com"),
     ("Flight Coffee", "https://flightcoffee.co.nz"),
@@ -70,21 +73,23 @@ def is_nz_coffee_candidate(url: str) -> bool:
 
 
 def extract_urls_from_ddg(html_page: str) -> list[str]:
+    """Extract destination URLs from DDG HTML search result links."""
     hrefs = re.findall(r'href="([^"]+)"', html_page)
     urls: list[str] = []
     for href in hrefs:
         if href.startswith("//duckduckgo.com") or href.startswith("/y.js"):
             continue
         if href.startswith("/l/?"):
-            q = parse_qs(urlparse(href).query)
-            if "uddg" in q:
-                urls.append(html.unescape(q["uddg"][0]))
+            params = parse_qs(urlparse(href).query)
+            if "uddg" in params:
+                urls.append(html.unescape(params["uddg"][0]))
         elif href.startswith("http"):
             urls.append(html.unescape(href))
     return urls
 
 
 def discover(query: str, limit: int) -> list[RoasterCandidate]:
+    """Discover roasters from search; fall back to curated seeds on failure."""
     url = DUCKDUCKGO_HTML.format(query=query.replace(" ", "+"))
     req = Request(url, headers={"User-Agent": USER_AGENT})
 
@@ -103,6 +108,7 @@ def discover(query: str, limit: int) -> list[RoasterCandidate]:
                 continue
             candidates[host] = RoasterCandidate(name=guess_name(base), base_url=base)
     except Exception:
+        # Silent fallback keeps cron flows resilient when search intermittently fails.
         pass
 
     if not candidates:
@@ -119,8 +125,8 @@ def write_csv(path: str, candidates: list[RoasterCandidate]) -> None:
     with out.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["name", "base_url", "platform", "catalog_hint"])
         writer.writeheader()
-        for c in candidates:
-            writer.writerow(c.__dict__)
+        for candidate in candidates:
+            writer.writerow(candidate.__dict__)
 
 
 def main() -> None:
