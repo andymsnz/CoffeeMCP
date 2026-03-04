@@ -109,3 +109,18 @@ python nz-coffee-roast-monitor/scripts/profile_memory.py feedback \
 ```
 
 Use order+feedback history to adjust roast/method/flavor preferences over time.
+
+
+## Cost Tracking + Monthly Summary
+
+Track spend per order so monthly coffee dashboards can report consumption and cost.
+
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py order-add \
+  --db data/coffee_memory.db --user andy --sku <sku> --grams 250 --price-nzd 26.50
+
+python nz-coffee-roast-monitor/scripts/profile_memory.py monthly-summary \
+  --db data/coffee_memory.db --user andy --month 2026-03
+```
+
+`monthly-summary` returns orders, total grams, total NZD spend, average bag cost, and normalized cost per 250g.

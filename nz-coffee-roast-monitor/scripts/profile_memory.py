@@ -35,6 +35,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             user_id TEXT,
             sku TEXT,
             grams INTEGER,
+            price_nzd REAL,
             ordered_at TEXT
         );
         CREATE TABLE IF NOT EXISTS feedback (
@@ -57,6 +58,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     try:
         conn.execute("ALTER TABLE catalog ADD COLUMN in_stock INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE orders ADD COLUMN price_nzd REAL")
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -101,11 +106,15 @@ def ingest_catalog(conn: sqlite3.Connection, input_path: str) -> int:
     return inserted
 
 
-def record_order(conn: sqlite3.Connection, user_id: str, sku: str, grams: int, ordered_at: str | None = None) -> None:
+def record_order(conn: sqlite3.Connection, user_id: str, sku: str, grams: int, price_nzd: float | None = None, ordered_at: str | None = None) -> None:
     ts = ordered_at or datetime.now(timezone.utc).isoformat()
+    if price_nzd is None:
+        row = conn.execute("SELECT price_nzd FROM catalog WHERE sku = ?", (sku,)).fetchone()
+        if row is not None:
+            price_nzd = row[0]
     conn.execute(
-        "INSERT INTO orders(user_id, sku, grams, ordered_at) VALUES (?, ?, ?, ?)",
-        (user_id, sku, grams, ts),
+        "INSERT INTO orders(user_id, sku, grams, price_nzd, ordered_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, sku, grams, price_nzd, ts),
     )
     conn.commit()
 
@@ -113,7 +122,7 @@ def record_order(conn: sqlite3.Connection, user_id: str, sku: str, grams: int, o
 def list_orders(conn: sqlite3.Connection, user_id: str, limit: int = 20) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT o.id, o.user_id, o.sku, c.name, c.roaster, o.grams, o.ordered_at
+        SELECT o.id, o.user_id, o.sku, c.name, c.roaster, o.grams, o.price_nzd, o.ordered_at
         FROM orders o LEFT JOIN catalog c ON c.sku = o.sku
         WHERE o.user_id = ?
         ORDER BY o.ordered_at DESC
@@ -208,6 +217,35 @@ def recommend(conn: sqlite3.Connection, user_id: str, limit: int, include_oos: b
     return scored[:limit]
 
 
+
+def monthly_summary(conn: sqlite3.Connection, user_id: str, month: str | None = None) -> dict:
+    """Return monthly totals for spend and grams, plus average cost per bag."""
+    if month:
+        ym = month
+    else:
+        ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    rows = conn.execute(
+        """
+        SELECT grams, COALESCE(price_nzd, 0) AS price_nzd
+        FROM orders
+        WHERE user_id = ? AND substr(ordered_at, 1, 7) = ?
+        """,
+        (user_id, ym),
+    ).fetchall()
+    total_grams = sum((r[0] or 0) for r in rows)
+    total_cost = round(sum((r[1] or 0) for r in rows), 2)
+    bag_count = len(rows)
+    avg_bag_cost = round(total_cost / bag_count, 2) if bag_count else 0
+    cost_per_250g = round((total_cost / total_grams) * 250, 2) if total_grams else 0
+    return {
+        "month": ym,
+        "orders": bag_count,
+        "total_grams": total_grams,
+        "total_cost_nzd": total_cost,
+        "avg_bag_cost_nzd": avg_bag_cost,
+        "cost_per_250g_nzd": cost_per_250g,
+    }
+
 def cli() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -224,12 +262,18 @@ def cli() -> argparse.Namespace:
     order_add.add_argument("--user", required=True)
     order_add.add_argument("--sku", required=True)
     order_add.add_argument("--grams", required=True, type=int)
+    order_add.add_argument("--price-nzd", default=None, type=float, help="Optional explicit order price")
     order_add.add_argument("--ordered-at", default="", help="ISO timestamp (optional)")
 
     order_list = sub.add_parser("order-list")
     order_list.add_argument("--db", required=True)
     order_list.add_argument("--user", required=True)
     order_list.add_argument("--limit", default=20, type=int)
+
+    monthly = sub.add_parser("monthly-summary")
+    monthly.add_argument("--db", required=True)
+    monthly.add_argument("--user", required=True)
+    monthly.add_argument("--month", default="", help="YYYY-MM (default current month)")
 
     feedback = sub.add_parser("feedback")
     feedback.add_argument("--db", required=True)
@@ -270,11 +314,14 @@ def main() -> None:
         print(f"ingested {count}")
     elif args.cmd == "order-add":
         init_db(conn)
-        record_order(conn, args.user, args.sku, args.grams, args.ordered_at or None)
+        record_order(conn, args.user, args.sku, args.grams, args.price_nzd, args.ordered_at or None)
         print("order recorded")
     elif args.cmd == "order-list":
         init_db(conn)
         print(json.dumps(list_orders(conn, args.user, args.limit), indent=2))
+    elif args.cmd == "monthly-summary":
+        init_db(conn)
+        print(json.dumps(monthly_summary(conn, args.user, args.month or None), indent=2))
     elif args.cmd == "feedback":
         init_db(conn)
         record_feedback(conn, args.user, args.sku, args.rating, args.note)
