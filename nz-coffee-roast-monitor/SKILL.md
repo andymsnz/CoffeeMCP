@@ -13,8 +13,9 @@ Use this skill to build and operate a repeatable coffee-roast monitoring pipelin
 1. **Discover roasters online** using `scripts/discover_roasters.py` (no manual seed file required).
 2. **Collect catalog snapshots** using `scripts/fetch_roasts.py`.
 3. **Normalize flavor notes** with `scripts/scaa_notes.py` to map free text into flavor-wheel categories.
-4. **Persist user memory** and order history with `scripts/profile_memory.py`.
+4. **Persist user memory** and order history with `scripts/profile_memory.py` (stock-aware recommendations default to in-stock items).
 5. **Run preference feedback loop** after each order or rating update to improve recommendations.
+6. **Build one-click carts** for in-stock products with `scripts/add_to_cart.py`.
 
 ## Quick Start
 
@@ -63,3 +64,30 @@ After each purchase or rating event:
 - Read `references/flavor_wheel_mapping.md` when extending note normalization rules.
 - Read `references/data_model.md` when integrating with MCP tools or order-assistance systems.
 - Use `scripts/discover_roasters.py` to refresh candidate NZ roaster sources over time.
+
+
+## Stock + Watchlist Rules
+
+- Prioritize **in-stock** items by default in recommendations and shortlists.
+- Only surface out-of-stock coffees when explicitly requested, or when adding to watchlist.
+- Use `profile_memory.py watchlist-add` to track specific beans the user wants despite stock status.
+
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py watchlist-add \
+  --db data/coffee_memory.db --user andy --sku <sku> --reason "notify on restock"
+
+python nz-coffee-roast-monitor/scripts/profile_memory.py watchlist-list \
+  --db data/coffee_memory.db --user andy
+```
+
+## Add-to-Cart (Shopify)
+
+Generate a cart URL for a single supplier using in-stock variants only:
+
+```bash
+python nz-coffee-roast-monitor/scripts/add_to_cart.py \
+  --input data/catalog_snapshot_tagged.jsonl \
+  --roaster "Grey Roasting Co" \
+  --items "Sipi Falls" "Ruera" "Java Halu" \
+  --grind FILTER --qty 1
+```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maintain user memory for coffee preferences and order events."""
+"""Maintain user memory for coffee preferences, stock-aware recommendations, and watchlists."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             roast_level TEXT,
             flavor_tags TEXT,
             price_nzd REAL,
+            in_stock INTEGER DEFAULT 1,
             updated_at TEXT
         );
         CREATE TABLE IF NOT EXISTS orders (
@@ -44,8 +45,20 @@ def init_db(conn: sqlite3.Connection) -> None:
             note TEXT,
             created_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            sku TEXT,
+            reason TEXT,
+            created_at TEXT,
+            UNIQUE(user_id, sku)
+        );
         """
     )
+    try:
+        conn.execute("ALTER TABLE catalog ADD COLUMN in_stock INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 
@@ -59,8 +72,8 @@ def ingest_catalog(conn: sqlite3.Connection, input_path: str) -> int:
                 continue
             conn.execute(
                 """
-                INSERT INTO catalog (sku, roaster, name, brew_methods, roast_level, flavor_tags, price_nzd, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO catalog (sku, roaster, name, brew_methods, roast_level, flavor_tags, price_nzd, in_stock, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sku) DO UPDATE SET
                   roaster=excluded.roaster,
                   name=excluded.name,
@@ -68,6 +81,7 @@ def ingest_catalog(conn: sqlite3.Connection, input_path: str) -> int:
                   roast_level=excluded.roast_level,
                   flavor_tags=excluded.flavor_tags,
                   price_nzd=excluded.price_nzd,
+                  in_stock=excluded.in_stock,
                   updated_at=excluded.updated_at
                 """,
                 (
@@ -78,6 +92,7 @@ def ingest_catalog(conn: sqlite3.Connection, input_path: str) -> int:
                     row.get("roast_level", "unknown"),
                     json.dumps(row.get("flavor_tags", [])),
                     row.get("price_nzd"),
+                    1 if row.get("in_stock", True) else 0,
                     now,
                 ),
             )
@@ -94,7 +109,34 @@ def record_feedback(conn: sqlite3.Connection, user_id: str, sku: str, rating: in
     conn.commit()
 
 
-def recommend(conn: sqlite3.Connection, user_id: str, limit: int) -> list[dict]:
+def add_watchlist(conn: sqlite3.Connection, user_id: str, sku: str, reason: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO watchlist(user_id, sku, reason, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, sku) DO UPDATE SET
+          reason=excluded.reason,
+          created_at=excluded.created_at
+        """,
+        (user_id, sku, reason, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def list_watchlist(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT w.sku, c.name, c.roaster, c.in_stock, w.reason, w.created_at
+        FROM watchlist w LEFT JOIN catalog c ON c.sku = w.sku
+        WHERE w.user_id = ?
+        ORDER BY w.created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recommend(conn: sqlite3.Connection, user_id: str, limit: int, include_oos: bool = False) -> list[dict]:
     rows = conn.execute(
         """
         SELECT f.rating, c.brew_methods, c.roast_level, c.flavor_tags
@@ -115,7 +157,11 @@ def recommend(conn: sqlite3.Connection, user_id: str, limit: int) -> list[dict]:
         for tag in json.loads(row["flavor_tags"] or "[]"):
             tag_pref[tag] += weight
 
-    all_catalog = conn.execute("SELECT * FROM catalog").fetchall()
+    if include_oos:
+        all_catalog = conn.execute("SELECT * FROM catalog").fetchall()
+    else:
+        all_catalog = conn.execute("SELECT * FROM catalog WHERE in_stock = 1").fetchall()
+
     scored = []
     for c in all_catalog:
         score = 0
@@ -124,7 +170,16 @@ def recommend(conn: sqlite3.Connection, user_id: str, limit: int) -> list[dict]:
         score += sum(brew_pref[m] for m in methods)
         score += roast_pref[c["roast_level"]]
         score += sum(tag_pref[t] for t in tags)
-        scored.append({"sku": c["sku"], "name": c["name"], "score": score})
+        score += 1 if c["in_stock"] else -5
+        scored.append(
+            {
+                "sku": c["sku"],
+                "name": c["name"],
+                "roaster": c["roaster"],
+                "in_stock": bool(c["in_stock"]),
+                "score": score,
+            }
+        )
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:limit]
@@ -152,6 +207,17 @@ def cli() -> argparse.Namespace:
     rec.add_argument("--db", required=True)
     rec.add_argument("--user", required=True)
     rec.add_argument("--limit", default=10, type=int)
+    rec.add_argument("--include-oos", action="store_true", help="Include out-of-stock items")
+
+    wl_add = sub.add_parser("watchlist-add")
+    wl_add.add_argument("--db", required=True)
+    wl_add.add_argument("--user", required=True)
+    wl_add.add_argument("--sku", required=True)
+    wl_add.add_argument("--reason", default="user requested")
+
+    wl_list = sub.add_parser("watchlist-list")
+    wl_list.add_argument("--db", required=True)
+    wl_list.add_argument("--user", required=True)
 
     return parser.parse_args()
 
@@ -173,7 +239,14 @@ def main() -> None:
         print("feedback recorded")
     elif args.cmd == "recommend":
         init_db(conn)
-        print(json.dumps(recommend(conn, args.user, args.limit), indent=2))
+        print(json.dumps(recommend(conn, args.user, args.limit, include_oos=args.include_oos), indent=2))
+    elif args.cmd == "watchlist-add":
+        init_db(conn)
+        add_watchlist(conn, args.user, args.sku, args.reason)
+        print("watchlist updated")
+    elif args.cmd == "watchlist-list":
+        init_db(conn)
+        print(json.dumps(list_watchlist(conn, args.user), indent=2))
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ FALLBACK_ROASTERS = [
     ("Atomic Coffee Roasters", "https://atomiccoffee.co.nz"),
     ("Raglan Roast", "https://raglanroast.co.nz"),
     ("Red Rabbit Coffee Co", "https://redrabbitcoffee.co.nz"),
+    ("Grey Roasting Co", "https://greyroastingco.com"),
 ]
 
 

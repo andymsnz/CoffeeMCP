@@ -105,7 +105,9 @@ def product_to_record(roaster: Roaster, product: dict, snapshot_at: str) -> dict
     body = re.sub(r"<[^>]+>", " ", product.get("body_html", ""))
     title = product.get("title", "")
     joined = f"{title} {body}"
-    variant = (product.get("variants") or [{}])[0]
+    variants = product.get("variants") or []
+    variant = variants[0] if variants else {}
+    in_stock = any(v.get("available") is True for v in variants)
     return {
         "snapshot_at": snapshot_at,
         "roaster": roaster.name,
@@ -120,6 +122,19 @@ def product_to_record(roaster: Roaster, product: dict, snapshot_at: str) -> dict
         "flavor_tags": [],
         "roast_date": None,
         "price_nzd": float(variant["price"]) if variant.get("price") else None,
+        "in_stock": in_stock,
+        "variant_titles_available": [v.get("title") for v in variants if v.get("available") is True],
+        "variant_ids_available": [v.get("id") for v in variants if v.get("available") is True],
+        "variants": [
+            {
+                "id": v.get("id"),
+                "title": v.get("title"),
+                "price": v.get("price"),
+                "available": bool(v.get("available")),
+                "grams": v.get("grams"),
+            }
+            for v in variants
+        ],
     }
 
 
