@@ -246,6 +246,37 @@ def monthly_summary(conn: sqlite3.Connection, user_id: str, month: str | None = 
         "cost_per_250g_nzd": cost_per_250g,
     }
 
+
+def reset_user_data(conn: sqlite3.Connection, user_id: str) -> dict:
+    """Delete one user's orders/feedback/watchlist while keeping shared catalog."""
+    counts = {}
+    for table in ("orders", "feedback", "watchlist"):
+        cur = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (user_id,))
+        counts[table] = cur.fetchone()[0]
+        conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+    conn.commit()
+    return {"user": user_id, "deleted": counts}
+
+
+def bootstrap_user(conn: sqlite3.Connection, user_id: str) -> dict:
+    """Return a day-one template for a new user profile protocol."""
+    return {
+        "user": user_id,
+        "defaults": {
+            "stock_first": True,
+            "show_oos_only_on_request": True,
+            "default_bag_size_g": 250,
+            "reporting_currency": "NZD",
+        },
+        "next_steps": [
+            "ingest latest catalog snapshot",
+            "log first order(s) with order-add",
+            "record early feedback with feedback",
+            "run monthly-summary at month-end",
+        ],
+    }
+
+
 def cli() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -298,6 +329,14 @@ def cli() -> argparse.Namespace:
     wl_list.add_argument("--db", required=True)
     wl_list.add_argument("--user", required=True)
 
+    reset = sub.add_parser("reset-user")
+    reset.add_argument("--db", required=True)
+    reset.add_argument("--user", required=True)
+
+    bootstrap = sub.add_parser("bootstrap-user")
+    bootstrap.add_argument("--db", required=True)
+    bootstrap.add_argument("--user", required=True)
+
     return parser.parse_args()
 
 
@@ -336,6 +375,12 @@ def main() -> None:
     elif args.cmd == "watchlist-list":
         init_db(conn)
         print(json.dumps(list_watchlist(conn, args.user), indent=2))
+    elif args.cmd == "reset-user":
+        init_db(conn)
+        print(json.dumps(reset_user_data(conn, args.user), indent=2))
+    elif args.cmd == "bootstrap-user":
+        init_db(conn)
+        print(json.dumps(bootstrap_user(conn, args.user), indent=2))
 
 
 if __name__ == "__main__":

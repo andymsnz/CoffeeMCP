@@ -41,3 +41,19 @@ python nz-coffee-roast-monitor/scripts/add_to_cart.py \
 
 - Recommendations should prioritize **in-stock** options by default.
 - Use watchlist flow when tracking specific out-of-stock beans.
+
+
+## Recommended persistent DB path
+
+Use a stable DB file for long-term history:
+
+```bash
+~/.openclaw/workspace/memory/coffee-memory.db
+```
+
+Day-one/reset helpers for sharable multi-user flow:
+
+```bash
+python nz-coffee-roast-monitor/scripts/profile_memory.py bootstrap-user --db ~/.openclaw/workspace/memory/coffee-memory.db --user andy
+python nz-coffee-roast-monitor/scripts/profile_memory.py reset-user --db ~/.openclaw/workspace/memory/coffee-memory.db --user andy
+```
