@@ -89,7 +89,7 @@ python nz-coffee-roast-monitor/scripts/add_to_cart.py \
   --input data/catalog_snapshot_tagged.jsonl \
   --roaster "Grey Roasting Co" \
   --items "Sipi Falls" "Ruera" "Java Halu" \
-  --grind FILTER --qty 1
+  --grind "WHOLE BEANS" --qty 1
 ```
 
 
@@ -124,3 +124,10 @@ python nz-coffee-roast-monitor/scripts/profile_memory.py monthly-summary \
 ```
 
 `monthly-summary` returns orders, total grams, total NZD spend, average bag cost, and normalized cost per 250g.
+
+
+## Grind Default Rule
+
+- Default cart builds to **WHOLE BEANS** in all cases.
+- Only use pre-ground variants when the user explicitly requests it.
+- Treat labels like *filter* or *espresso* primarily as brew suitability/style, not automatic grind selection.

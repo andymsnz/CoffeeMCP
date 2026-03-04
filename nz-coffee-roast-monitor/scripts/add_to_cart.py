@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build Shopify cart URL(s) from catalog snapshots.
 
-Defaults to in-stock variants and attempts to match requested grind first.
+Defaults to in-stock variants and WHOLE BEANS by default.
+Use --grind only when the user explicitly asks for pre-ground.
 """
 
 from __future__ import annotations
@@ -20,8 +21,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--qty", type=int, default=1, help="Quantity per selected item")
     p.add_argument(
         "--grind",
-        default="FILTER",
-        help="Preferred variant title keyword, e.g. FILTER, WHOLE BEANS",
+        default="WHOLE BEANS",
+        help="Preferred variant title keyword, e.g. WHOLE BEANS, FILTER, ESPRESSO",
     )
     p.add_argument(
         "--allow-oos",
