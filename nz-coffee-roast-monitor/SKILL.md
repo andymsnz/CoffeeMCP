@@ -131,3 +131,14 @@ python nz-coffee-roast-monitor/scripts/profile_memory.py monthly-summary \
 - Default cart builds to **WHOLE BEANS** in all cases.
 - Only use pre-ground variants when the user explicitly requests it.
 - Treat labels like *filter* or *espresso* primarily as brew suitability/style, not automatic grind selection.
+
+
+## Operating Instructions (Normative)
+
+1. **Stock policy (MUST):** recommend and cart only in-stock beans by default.
+2. **Out-of-stock policy (MUST):** include out-of-stock beans only when explicitly requested or when adding to watchlist.
+3. **Grind policy (MUST):** default all carts to `WHOLE BEANS`. Use pre-ground only when explicitly requested by the user.
+4. **Suitability semantics (MUST):** treat labels like `filter` and `espresso` as bean suitability/style metadata, not grind directives.
+5. **Merch exclusion (SHOULD):** exclude non-bean products from recommendation outputs wherever possible.
+6. **Order logging (SHOULD):** log each purchase with grams and cost to support monthly reporting.
+7. **User isolation (MUST):** store preferences by user id; use `bootstrap-user` for day-one setup and `reset-user` for user-level reset.

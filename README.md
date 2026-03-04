@@ -31,6 +31,15 @@ python nz-coffee-roast-monitor/scripts/add_to_cart.py \
 - Default grind selection is **WHOLE BEANS** unless the user explicitly asks for pre-ground.
 - Use watchlist flow for specific out-of-stock beans.
 
+## Driving Instructions
+
+- **Stock-first:** recommendations and carts default to in-stock beans only.
+- **Whole-bean default:** carts default to `WHOLE BEANS`; pre-ground is opt-in only by explicit user request.
+- **Suitability vs grind:** `filter` / `espresso` describe bean suitability/style, not default grind.
+- **Watchlist behavior:** out-of-stock beans are tracked via watchlist when specifically requested.
+- **Reporting discipline:** log orders with grams + cost so monthly spend/consumption dashboards stay accurate.
+- **Multi-user hygiene:** bootstrap and reset at user scope (`bootstrap-user`, `reset-user`) to keep sharable deployments clean.
+
 ## Recommended persistent DB path
 
 Use a stable DB file for long-term history:
